@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
-import {FunctionsClient} from "@chainlink/contracts/src/v0.8/functions/v1_3_0/FunctionsClient.sol";
+import {FunctionsClient} from "@chainlink/contracts/src/v0.8/functions/v1_0_0/FunctionsClient.sol";
 import {ConfirmedOwner} from "@chainlink/contracts/src/v0.8/shared/access/ConfirmedOwner.sol";
 import {FunctionsRequest} from "@chainlink/contracts/src/v0.8/functions/v1_0_0/libraries/FunctionsRequest.sol";
 
@@ -18,8 +18,6 @@ contract HurdleRateOracle is FunctionsClient, ConfirmedOwner {
     error RequestNotFound();
     error IndexOutOfBounds();
     error InvalidTimeRange();
-    error InvalidGasLimit();
-    error InvalidDonId();
     error InvalidSubscriptionId();
 
     ////////////////////////////////////////////////////////////////
@@ -27,34 +25,18 @@ contract HurdleRateOracle is FunctionsClient, ConfirmedOwner {
     ////////////////////////////////////////////////////////////////
 
     // Source code for the Chainlink Functions request
-    string private constant SOURCE_CODE =
-        "if(!secrets.signature) {"
-        "throw Error('No signature');"
-        "}"
-        "const apiResponse = await Functions.makeHttpRequest({"
-        "url: `https://api.maxapy.io/hurdle-rate`,"
-        "headers: {"
-        '"Content-Type": "application/json",'
-        '"signature": secrets.signature'
-        "}"
-        "});"
-        "if (apiResponse.error) {"
-        "throw Error('API Request Error');"
-        "}"
-        "const { data } = apiResponse;"
-        "const packedValue = (BigInt(data.lidoApyBasisPoints) << 16n) | BigInt(data.usdyApyBasisPoints);"
-        "return Functions.encodeUint256(packedValue);";
+    string private source;
 
     ////////////////////////////////////////////////////////////////
     ///                      STATE VARIABLES                       ///
     ////////////////////////////////////////////////////////////////
 
-    /// @notice Chainlink Functions DON ID
-    bytes32 public donId;
-    /// @notice Chainlink Functions subscription ID for billing
+    bytes32 private s_lastRequestId;
+    bytes private s_lastResponse;
+    bytes private s_lastError;
+    uint32 public constant CALLBACK_GAS_LIMIT = 300000;
     uint64 public subscriptionId;
-    /// @notice Gas limit for callback fulfillment
-    uint32 private gasLimit;
+    bytes32 public constant donId = 0x66756e2d626173652d6d61696e6e65742d310000000000000000000000000000;
 
     /// @notice Current Lido staking APY in basis points
     uint16 public currentLidoRate;
@@ -104,25 +86,19 @@ contract HurdleRateOracle is FunctionsClient, ConfirmedOwner {
     /// @param error The error message or bytes
     event RequestFailed(bytes32 indexed requestId, bytes error);
 
-    /// @notice Emitted when the DON ID is updated
-    /// @param oldDonId The previous DON ID
-    /// @param newDonId The new DON ID
-    event DonIdUpdated(bytes32 oldDonId, bytes32 newDonId);
-
     /// @notice Emitted when the subscription ID is updated
     /// @param oldSubId The previous subscription ID
     /// @param newSubId The new subscription ID
     event SubscriptionIdUpdated(uint64 oldSubId, uint64 newSubId);
 
-    /// @notice Emitted when the gas limit is updated
-    /// @param oldLimit The previous gas limit
-    /// @param newLimit The new gas limit
-    event GasLimitUpdated(uint32 oldLimit, uint32 newLimit);
-
     /// @notice Emitted when historical data is cleaned up
     /// @param fromLength The length of the history before cleanup
     /// @param toLength The length of the history after cleanup
     event HistoryCleaned(uint256 fromLength, uint256 toLength);
+
+    /// @notice Emitted when the source code is updated 
+    /// @param newSource The new source code 
+    event SourceCodeUpdated(string newSource);
 
     ///////////////////////////////////////////////////////////////
     ///                     CONSTRUCTOR                           ///
@@ -130,19 +106,15 @@ contract HurdleRateOracle is FunctionsClient, ConfirmedOwner {
 
     /// @notice Initializes the Hurdle Rate Oracle with required Chainlink Functions parameters
     /// @param router The address of the Chainlink Functions router contract
-    /// @param _donId The DON ID for the Chainlink Functions network
     /// @param _subscriptionId The subscription ID for billing Chainlink Functions requests
-    /// @param _gasLimit The gas limit for callback fulfillment
     /// @dev Inherits from FunctionsClient and ConfirmedOwner to handle Chainlink Functions and ownership
     constructor(
         address router,
-        bytes32 _donId,
         uint64 _subscriptionId,
-        uint32 _gasLimit
+        string memory _source
     ) FunctionsClient(router) ConfirmedOwner(msg.sender) {
-        donId = _donId;
         subscriptionId = _subscriptionId;
-        gasLimit = _gasLimit;
+        source = _source;
     }
 
     ////////////////////////////////////////////////////////////////
@@ -151,32 +123,19 @@ contract HurdleRateOracle is FunctionsClient, ConfirmedOwner {
 
     /// @notice Requests an update for the hurdle rates from the oracle
     /// @dev Initiates a Chainlink Functions request to fetch current APY rates
-    function requestRateUpdate(
-        uint8 donHostedSecretsSlotID,
-        uint64 donHostedSecretsVersion
-    ) external {
+    function requestRateUpdate() external {
         FunctionsRequest.Request memory req;
-        req.initializeRequest(
-            FunctionsRequest.Location.Inline,
-            FunctionsRequest.CodeLanguage.JavaScript,
-            SOURCE_CODE
-        );
-
-        if (donHostedSecretsVersion > 0) {
-            req.addDONHostedSecrets(
-                donHostedSecretsSlotID,
-                donHostedSecretsVersion
-            );
-        }
-
+        req.initializeRequestForInlineJavaScript(source);
+        
         bytes32 requestId = _sendRequest(
             req.encodeCBOR(),
             subscriptionId,
-            gasLimit,
+            CALLBACK_GAS_LIMIT,
             donId
         );
 
         pendingRequests[requestId] = true;
+        s_lastRequestId = requestId;
         emit RateUpdateRequested(requestId);
     }
 
@@ -189,13 +148,16 @@ contract HurdleRateOracle is FunctionsClient, ConfirmedOwner {
     /// @param requestId The ID of the request being fulfilled
     /// @param response The response from the API containing packed rates
     /// @param err Error message if the request failed
-    function _fulfillRequest(
+    function fulfillRequest(
         bytes32 requestId,
         bytes memory response,
         bytes memory err
     ) internal override {
         if (!pendingRequests[requestId]) revert RequestNotFound();
         delete pendingRequests[requestId];
+
+        s_lastResponse = response;
+        s_lastError = err;
 
         if (err.length > 0) {
             emit RequestFailed(requestId, err);
@@ -333,15 +295,13 @@ contract HurdleRateOracle is FunctionsClient, ConfirmedOwner {
     ////////////////////////////////////////////////////////////////
     ///                     OWNER FUNCTIONS                        ///
     ////////////////////////////////////////////////////////////////
-
-    /// @notice Sets the Chainlink Functions DON ID
-    /// @param newDonId The new DON ID to set
+    
+    /// @notice Sets the source code for the Chainlink Functions request 
+    /// @param _source The new source code to set
     /// @dev Only callable by contract owner
-    function setDonId(bytes32 newDonId) external onlyOwner {
-        if (newDonId == 0 || newDonId == donId) revert InvalidDonId();
-        donId = newDonId;
-
-        emit DonIdUpdated(donId, newDonId);
+    function setSource(string memory _source) external onlyOwner {
+        source = _source;
+        emit SourceCodeUpdated(_source);
     }
 
     /// @notice Sets the Chainlink Functions subscription ID
@@ -353,16 +313,6 @@ contract HurdleRateOracle is FunctionsClient, ConfirmedOwner {
         subscriptionId = newSubscriptionId;
 
         emit SubscriptionIdUpdated(subscriptionId, newSubscriptionId);
-    }
-
-    /// @notice Sets the gas limit for Chainlink Functions callbacks
-    /// @param newGasLimit The new gas limit to set
-    /// @dev Only callable by contract owner
-    function setGasLimit(uint32 newGasLimit) external onlyOwner {
-        if (newGasLimit == 0) revert InvalidGasLimit();
-        gasLimit = newGasLimit;
-
-        emit GasLimitUpdated(gasLimit, newGasLimit);
     }
 
     /// @notice Removes historical data older than specified age

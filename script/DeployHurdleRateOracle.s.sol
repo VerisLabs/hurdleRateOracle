@@ -5,33 +5,40 @@ import {Script} from "forge-std/Script.sol";
 import {HurdleRateOracle} from "../src/HurdleRateOracle.sol";
 
 contract DeployHurdleRateOracle is Script {
+    // Chainlink Functions Router address for Base Mainnet
+    address constant ROUTER = 0xf9B8fc078197181C841c296C876945aaa425B278;
     
-    // Chainlink Functions Router addresses per network
-    address constant ROUTER_AMOY = 0xC22a79eBA640940ABB6dF0f7982cc119578E11De; // Polygon AMOY
-
-    // Example DON ID for Sepolia (you'll need to replace this)
-    bytes32 constant DON_ID = bytes32("fun-polygon-amoy-1");
+    // Default source code for the oracle
+    string constant DEFAULT_SOURCE = 
+        "const apiResponse = await Functions.makeHttpRequest({"
+        "url: `https://api.maxapy.io/hurdle-rate`,"
+        "headers: {"
+        "'Content-Type': 'application/json'"
+        "}"
+        "});"
+        "if (apiResponse.error) {"
+        "throw Error('API Request Error');"
+        "}"
+        "const { data } = apiResponse;"
+        "const packedValue = (BigInt(data.lidoApyBasisPoints) << 16n) | BigInt(data.usdyApyBasisPoints);"
+        "return Functions.encodeUint256(packedValue);";
 
     function run() external returns (HurdleRateOracle) {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         
         // Configuration
-        address router = ROUTER_AMOY; 
-        bytes32 donId = DON_ID;
-        uint64 subscriptionId = 401; 
-        uint32 gasLimit = 300000;
+        uint64 subscriptionId = 36; // Your subscription ID
 
         vm.startBroadcast(deployerPrivateKey);
-
+        
         HurdleRateOracle oracle = new HurdleRateOracle(
-            router,
-            donId,
+            ROUTER,
             subscriptionId,
-            gasLimit
+            DEFAULT_SOURCE
         );
 
         vm.stopBroadcast();
-
+        
         return oracle;
     }
 }
