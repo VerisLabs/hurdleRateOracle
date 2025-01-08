@@ -4,4 +4,9 @@ out = "out"
 libs = ["lib"]
 solc_version = "0.8.19"
 
+[profile.default.remap]
+"@chainlink/contracts/" = "lib/chainlink/contracts/"
+"forge-std/" = "lib/forge-std/src/"
+"@solady/" = "lib/solady/src/"
+
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
