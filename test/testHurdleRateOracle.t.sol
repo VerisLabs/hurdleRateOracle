@@ -35,8 +35,8 @@ contract HurdleRateOracleTest is Test {
         assertEq(oracle.currentRates(), 0);
 
         // Check initial token registrations
-        (uint16 wethRate, ) = oracle.getRate(WETH);
-        (uint16 usdcRate, ) = oracle.getRate(USDC);
+        (uint16 wethRate,) = oracle.getRate(WETH);
+        (uint16 usdcRate,) = oracle.getRate(USDC);
         assertEq(wethRate, 0);
         assertEq(usdcRate, 0);
     }
@@ -48,7 +48,7 @@ contract HurdleRateOracleTest is Test {
         oracle.registerToken(newToken, 2);
         vm.stopPrank();
 
-        (uint16 rate, ) = oracle.getRate(newToken);
+        (uint16 rate,) = oracle.getRate(newToken);
         assertEq(rate, 0);
     }
 
@@ -61,12 +61,7 @@ contract HurdleRateOracleTest is Test {
         oracle.registerToken(address(0), 2);
 
         // Test invalid position
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                HurdleRateOracle.InvalidPosition.selector,
-                16
-            )
-        );
+        vm.expectRevert(abi.encodeWithSelector(HurdleRateOracle.InvalidPosition.selector, 16));
         oracle.registerToken(makeAddr("token"), 16);
 
         // Test already registered position
@@ -162,12 +157,7 @@ contract HurdleRateOracleTest is Test {
         oracle.registerToken(makeAddr("token15"), 15);
 
         // Test position 16 (invalid)
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                HurdleRateOracle.InvalidPosition.selector,
-                16
-            )
-        );
+        vm.expectRevert(abi.encodeWithSelector(HurdleRateOracle.InvalidPosition.selector, 16));
         oracle.registerToken(makeAddr("token16"), 16);
 
         vm.stopPrank();
@@ -175,12 +165,7 @@ contract HurdleRateOracleTest is Test {
 
     function test_GetRateByPosition_Boundaries() public {
         // Test invalid position
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                HurdleRateOracle.InvalidPosition.selector,
-                16
-            )
-        );
+        vm.expectRevert(abi.encodeWithSelector(HurdleRateOracle.InvalidPosition.selector, 16));
         oracle.getRateByPosition(16);
 
         // Test unregistered but valid position

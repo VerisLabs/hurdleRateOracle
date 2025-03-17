@@ -81,11 +81,7 @@ contract HurdleRateOracle is FunctionsClient, ConfirmedOwner, ReentrancyGuard {
     /// @param requestId The unique identifier of the fulfilled request
     /// @param newRates The new rates bitmap that was set
     /// @param timestamp The timestamp when rates were updated
-    event RateUpdateFulfilled(
-        bytes32 indexed requestId,
-        uint256 newRates,
-        uint256 timestamp
-    );
+    event RateUpdateFulfilled(bytes32 indexed requestId, uint256 newRates, uint256 timestamp);
 
     /// @notice Emitted when a new token is registered
     /// @param token The address of the registered token
@@ -127,11 +123,10 @@ contract HurdleRateOracle is FunctionsClient, ConfirmedOwner, ReentrancyGuard {
     /// @param router Chainlink Functions router address
     /// @param _subscriptionId Initial Chainlink Functions subscription ID
     /// @param _source Initial JavaScript source code for rate fetching
-    constructor(
-        address router,
-        uint64 _subscriptionId,
-        string memory _source
-    ) FunctionsClient(router) ConfirmedOwner(msg.sender) {
+    constructor(address router, uint64 _subscriptionId, string memory _source)
+        FunctionsClient(router)
+        ConfirmedOwner(msg.sender)
+    {
         if (router == address(0)) revert AddressZero();
         if (_subscriptionId == 0) revert InvalidSubscription();
         subscriptionId = _subscriptionId;
@@ -168,8 +163,9 @@ contract HurdleRateOracle is FunctionsClient, ConfirmedOwner, ReentrancyGuard {
     /// @param newSubscriptionId The new subscription ID to set
     /// @dev Only callable by contract owner
     function setSubscriptionId(uint64 newSubscriptionId) external onlyOwner {
-        if (newSubscriptionId == 0 || newSubscriptionId == subscriptionId)
+        if (newSubscriptionId == 0 || newSubscriptionId == subscriptionId) {
             revert InvalidSubscriptionId();
+        }
         subscriptionId = newSubscriptionId;
         emit SubscriptionIdUpdated(subscriptionId, newSubscriptionId);
     }
@@ -185,8 +181,9 @@ contract HurdleRateOracle is FunctionsClient, ConfirmedOwner, ReentrancyGuard {
     function _registerToken(address token, uint8 position) private {
         if (token == address(0)) revert AddressZero();
         if (position >= 16) revert InvalidPosition(position);
-        if (registeredPositions & (1 << position) != 0)
+        if (registeredPositions & (1 << position) != 0) {
             revert TokenAlreadyRegistered();
+        }
 
         registeredPositions |= 1 << position;
         tokenToPosition[token] = position;
@@ -201,18 +198,14 @@ contract HurdleRateOracle is FunctionsClient, ConfirmedOwner, ReentrancyGuard {
     /// @notice Triggers a rate update via Chainlink Functions
     /// @dev Protected against reentrancy and rate update frequency manipulation
     function updateRates() external nonReentrant isNotPaused {
-        if (block.timestamp - lastUpdateTimestamp < MIN_UPDATE_INTERVAL)
+        if (block.timestamp - lastUpdateTimestamp < MIN_UPDATE_INTERVAL) {
             revert UpdateTooFrequent();
+        }
 
         FunctionsRequest.Request memory req;
         req.initializeRequestForInlineJavaScript(source);
 
-        bytes32 requestId = _sendRequest(
-            req.encodeCBOR(),
-            subscriptionId,
-            CALLBACK_GAS_LIMIT,
-            donId
-        );
+        bytes32 requestId = _sendRequest(req.encodeCBOR(), subscriptionId, CALLBACK_GAS_LIMIT, donId);
 
         pendingRequests[requestId] = true;
 
@@ -223,11 +216,7 @@ contract HurdleRateOracle is FunctionsClient, ConfirmedOwner, ReentrancyGuard {
     ///                     INTERNAL FUNCTIONS                   ///
     ////////////////////////////////////////////////////////////////
 
-    function fulfillRequest(
-        bytes32 requestId,
-        bytes memory response,
-        bytes memory err
-    ) internal override {
+    function fulfillRequest(bytes32 requestId, bytes memory response, bytes memory err) internal override {
         if (!pendingRequests[requestId]) revert RequestNotFound();
         delete pendingRequests[requestId];
 
@@ -253,17 +242,13 @@ contract HurdleRateOracle is FunctionsClient, ConfirmedOwner, ReentrancyGuard {
     /// @param token Address of the token
     /// @return rate Current rate in basis points
     /// @return timestamp Timestamp of the last rate update
-    function getRate(
-        address token
-    ) external view returns (uint16 rate, uint256 timestamp) {
+    function getRate(address token) external view returns (uint16 rate, uint256 timestamp) {
         uint8 position = tokenToPosition[token];
-        if (registeredPositions & (1 << position) == 0)
+        if (registeredPositions & (1 << position) == 0) {
             revert TokenNotRegistered();
+        }
         assembly {
-            rate := and(
-                shr(mul(position, 16), sload(currentRates.slot)),
-                0xFFFF
-            )
+            rate := and(shr(mul(position, 16), sload(currentRates.slot)), 0xFFFF)
         }
         return (rate, lastUpdateTimestamp);
     }
@@ -286,9 +271,7 @@ contract HurdleRateOracle is FunctionsClient, ConfirmedOwner, ReentrancyGuard {
     /// @param rates Array of rates to pack into bitmap
     /// @return bitmap Packed rates bitmap
     /// @dev Each rate must be <= MAX_RATE_BPS
-    function getBitmap(
-        uint16[] calldata rates
-    ) external pure returns (uint256 bitmap) {
+    function getBitmap(uint16[] calldata rates) external pure returns (uint256 bitmap) {
         if (rates.length > 16) revert RateLimit();
 
         unchecked {
